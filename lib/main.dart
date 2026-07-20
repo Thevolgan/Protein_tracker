@@ -62,18 +62,29 @@ class _HomePageState extends State<HomePage> {
   List<Entry> entries = [];
   final _name = TextEditingController();
   final _grams = TextEditingController();
+  final _goalCtrl = TextEditingController();
   bool _editingGoal = false;
 
   @override
   void initState() {
     super.initState();
+    _goalCtrl.text = goal.toString();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _grams.dispose();
+    _goalCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
     final p = await SharedPreferences.getInstance();
     setState(() {
       goal = p.getInt(_goalKey) ?? 140;
+      _goalCtrl.text = goal.toString();
       final raw = p.getString(_entriesKey);
       if (raw != null) {
         entries = (jsonDecode(raw) as List)
@@ -120,6 +131,34 @@ class _HomePageState extends State<HomePage> {
     _save();
   }
 
+  /// Parses whatever is currently in the goal field, saves it if valid,
+  /// and returns whether the save succeeded.
+  bool _commitGoal() {
+    final parsed = int.tryParse(_goalCtrl.text.trim());
+    if (parsed == null || parsed <= 0) {
+      // Invalid input: revert the field to the last known-good goal
+      // instead of silently losing the user's progress.
+      _goalCtrl.text = goal.toString();
+      return false;
+    }
+    setState(() => goal = parsed);
+    _save();
+    return true;
+  }
+
+  void _toggleGoalEditing() {
+    if (_editingGoal) {
+      // Currently editing -> this tap is "Done": commit and close.
+      _commitGoal();
+      setState(() => _editingGoal = false);
+      FocusScope.of(context).unfocus();
+    } else {
+      // Entering edit mode -> make sure the field shows the live goal.
+      _goalCtrl.text = goal.toString();
+      setState(() => _editingGoal = true);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final today = todayEntries;
@@ -163,7 +202,7 @@ class _HomePageState extends State<HomePage> {
                       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                       color: const Color(0xFFE5E5EA),
                       borderRadius: BorderRadius.circular(100),
-                      onPressed: () => setState(() => _editingGoal = !_editingGoal),
+                      onPressed: _toggleGoalEditing,
                       child: Text(_editingGoal ? 'Done' : 'Goal',
                           style: const TextStyle(
                               fontSize: 13, fontWeight: FontWeight.w600,
@@ -215,7 +254,7 @@ class _HomePageState extends State<HomePage> {
                           SizedBox(
                             width: 90,
                             child: CupertinoTextField(
-                              controller: TextEditingController(text: goal.toString()),
+                              controller: _goalCtrl,
                               keyboardType: TextInputType.number,
                               textAlign: TextAlign.center,
                               decoration: BoxDecoration(
@@ -224,8 +263,9 @@ class _HomePageState extends State<HomePage> {
                               ),
                               style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
                               onSubmitted: (v) {
-                                setState(() => goal = int.tryParse(v) ?? goal);
-                                _save();
+                                if (_commitGoal()) {
+                                  setState(() => _editingGoal = false);
+                                }
                               },
                             ),
                           ),
