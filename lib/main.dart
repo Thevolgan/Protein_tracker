@@ -63,6 +63,7 @@ class _HomePageState extends State<HomePage> {
   final _name = TextEditingController();
   final _grams = TextEditingController();
   final _goalCtrl = TextEditingController();
+  final _gramsFocus = FocusNode();
   bool _editingGoal = false;
 
   @override
@@ -77,6 +78,7 @@ class _HomePageState extends State<HomePage> {
     _name.dispose();
     _grams.dispose();
     _goalCtrl.dispose();
+    _gramsFocus.dispose();
     super.dispose();
   }
 
@@ -123,6 +125,7 @@ class _HomePageState extends State<HomePage> {
       _name.clear();
       _grams.clear();
     });
+    FocusScope.of(context).unfocus();
     _save();
   }
 
@@ -188,8 +191,14 @@ class _HomePageState extends State<HomePage> {
     const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
     final dateStr = '${weekdays[now.weekday-1]}, ${months[now.month-1]} ${now.day}';
 
+    final keyboardOpen = MediaQuery.of(context).viewInsets.bottom > 0;
+
     return CupertinoPageScaffold(
-      child: Stack(
+      resizeToAvoidBottomInset: false,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => FocusScope.of(context).unfocus(),
+        child: Stack(
         children: [
           SafeArea(
             bottom: false,
@@ -277,6 +286,7 @@ class _HomePageState extends State<HomePage> {
                             child: CupertinoTextField(
                               controller: _goalCtrl,
                               keyboardType: TextInputType.number,
+                              textInputAction: TextInputAction.done,
                               textAlign: TextAlign.center,
                               decoration: BoxDecoration(
                                 color: const Color(0xFFE5E5EA),
@@ -287,6 +297,7 @@ class _HomePageState extends State<HomePage> {
                                 if (_commitGoal()) {
                                   setState(() => _editingGoal = false);
                                 }
+                                FocusScope.of(context).unfocus();
                               },
                             ),
                           ),
@@ -312,9 +323,11 @@ class _HomePageState extends State<HomePage> {
                       child: CupertinoTextField(
                         controller: _name,
                         placeholder: 'Chicken breast',
+                        textInputAction: TextInputAction.next,
                         decoration: const BoxDecoration(),
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                         style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+                        onSubmitted: (_) => FocusScope.of(context).requestFocus(_gramsFocus),
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -322,8 +335,10 @@ class _HomePageState extends State<HomePage> {
                       width: 72,
                       child: CupertinoTextField(
                         controller: _grams,
+                        focusNode: _gramsFocus,
                         placeholder: '30',
                         keyboardType: TextInputType.number,
+                        textInputAction: TextInputAction.done,
                         textAlign: TextAlign.center,
                         decoration: BoxDecoration(
                           color: const Color(0xFFE5E5EA),
@@ -331,6 +346,7 @@ class _HomePageState extends State<HomePage> {
                         ),
                         padding: const EdgeInsets.symmetric(vertical: 12),
                         style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                        onSubmitted: (_) => _add(),
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -393,38 +409,42 @@ class _HomePageState extends State<HomePage> {
           ),
           // Fixed "Previous days" button, always pinned to the bottom of
           // the screen regardless of how far the list above is scrolled.
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 20 + MediaQuery.of(context).padding.bottom,
-            child: Center(
-              child: GestureDetector(
-                onTap: _openHistory,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1C1C1E),
-                    borderRadius: BorderRadius.circular(100),
-                    boxShadow: const [
-                      BoxShadow(color: Color(0x33000000), blurRadius: 16, offset: Offset(0, 6)),
-                    ],
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: const [
-                      Icon(CupertinoIcons.calendar, size: 18, color: CupertinoColors.white),
-                      SizedBox(width: 8),
-                      Text('Previous days',
-                          style: TextStyle(
-                              fontSize: 15, fontWeight: FontWeight.w600,
-                              color: CupertinoColors.white)),
-                    ],
+          // Hidden while the keyboard is open so it can't drift up over
+          // the text fields.
+          if (!keyboardOpen)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 20 + MediaQuery.of(context).padding.bottom,
+              child: Center(
+                child: GestureDetector(
+                  onTap: _openHistory,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1C1C1E),
+                      borderRadius: BorderRadius.circular(100),
+                      boxShadow: const [
+                        BoxShadow(color: Color(0x33000000), blurRadius: 16, offset: Offset(0, 6)),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: const [
+                        Icon(CupertinoIcons.calendar, size: 18, color: CupertinoColors.white),
+                        SizedBox(width: 8),
+                        Text('Previous days',
+                            style: TextStyle(
+                                fontSize: 15, fontWeight: FontWeight.w600,
+                                color: CupertinoColors.white)),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
         ],
+        ),
       ),
     );
   }
@@ -448,6 +468,8 @@ class _CalendarModalState extends State<_CalendarModal> {
   late List<Entry> _entries;
   late DateTime _month; // first day of the displayed month
   late DateTime _selected;
+  double _dragOffset = 0;
+  bool _dragging = false;
 
   static const _weekdaysShort = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
   static const _weekdays = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
@@ -460,6 +482,25 @@ class _CalendarModalState extends State<_CalendarModal> {
     final now = DateTime.now();
     _month = DateTime(now.year, now.month, 1);
     _selected = DateTime(now.year, now.month, now.day);
+  }
+
+  void _onHandleDragUpdate(DragUpdateDetails d) {
+    setState(() {
+      _dragging = true;
+      _dragOffset = math.max(0, _dragOffset + d.delta.dy);
+    });
+  }
+
+  void _onHandleDragEnd(DragEndDetails d) {
+    final velocity = d.velocity.pixelsPerSecond.dy;
+    if (_dragOffset > 120 || velocity > 700) {
+      Navigator.of(context).pop();
+    } else {
+      setState(() {
+        _dragging = false;
+        _dragOffset = 0;
+      });
+    }
   }
 
   bool _sameDay(DateTime a, DateTime b) =>
@@ -558,102 +599,114 @@ class _CalendarModalState extends State<_CalendarModal> {
     final total = dayEntries.fold<int>(0, (s, e) => s + e.grams);
     final pct = widget.goal > 0 ? ((total / widget.goal) * 100).clamp(0, 999).round() : 0;
 
-    return Container(
+    return AnimatedContainer(
+      duration: _dragging ? Duration.zero : const Duration(milliseconds: 200),
+      transform: Matrix4.translationValues(0, _dragOffset, 0),
       decoration: const BoxDecoration(
         color: Color(0xFFF2F2F7),
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       child: SafeArea(
         top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 10),
-            Container(
-              width: 36, height: 5,
-              decoration: BoxDecoration(
-                  color: const Color(0xFFD1D1D6), borderRadius: BorderRadius.circular(3)),
-            ),
-            const SizedBox(height: 16),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  CupertinoButton(
-                    padding: EdgeInsets.zero,
-                    minimumSize: const Size(36, 36),
-                    onPressed: () => _changeMonth(-1),
-                    child: const Icon(CupertinoIcons.chevron_left, size: 20),
-                  ),
-                  Text('${_months[_month.month - 1]} ${_month.year}',
-                      style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
-                  CupertinoButton(
-                    padding: EdgeInsets.zero,
-                    minimumSize: const Size(36, 36),
-                    onPressed: () => _changeMonth(1),
-                    child: const Icon(CupertinoIcons.chevron_right, size: 20),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 8),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Row(
-                children: _weekdaysShort
-                    .map((d) => Expanded(
-                          child: Center(
-                            child: Text(d,
-                                style: const TextStyle(
-                                    fontSize: 12, fontWeight: FontWeight.w600,
-                                    color: Color(0xFF8E8E93))),
-                          ),
-                        ))
-                    .toList(),
-              ),
-            ),
-            const SizedBox(height: 4),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: _buildGrid(now),
-            ),
-            const SizedBox(height: 12),
-            Container(height: 1, color: const Color(0xFFE5E5EA), margin: const EdgeInsets.symmetric(horizontal: 20)),
-            const SizedBox(height: 12),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(_labelFor(_selected, now),
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-                  Text('$total g · $pct%',
-                      style: const TextStyle(
-                          fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF8E8E93))),
-                ],
-              ),
-            ),
-            const SizedBox(height: 8),
-            Flexible(
-              child: dayEntries.isEmpty
-                  ? const Padding(
-                      padding: EdgeInsets.all(24),
-                      child: Text('No entries for this day',
-                          style: TextStyle(color: Color(0xFF8E8E93), fontWeight: FontWeight.w500)),
-                    )
-                  : ListView.builder(
-                      shrinkWrap: true,
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      itemCount: dayEntries.length,
-                      itemBuilder: (context, i) => _EntryTile(
-                        entry: dayEntries[i],
-                        onDelete: () => _delete(dayEntries[i].id),
-                      ),
+        child: SingleChildScrollView(
+          child: Column(
+            children: [
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onVerticalDragUpdate: _onHandleDragUpdate,
+                onVerticalDragEnd: _onHandleDragEnd,
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  child: Center(
+                    child: Container(
+                      width: 36, height: 5,
+                      decoration: BoxDecoration(
+                          color: const Color(0xFFD1D1D6), borderRadius: BorderRadius.circular(3)),
                     ),
-            ),
-            const SizedBox(height: 12),
-          ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    CupertinoButton(
+                      padding: EdgeInsets.zero,
+                      minimumSize: const Size(36, 36),
+                      onPressed: () => _changeMonth(-1),
+                      child: const Icon(CupertinoIcons.chevron_left, size: 20),
+                    ),
+                    Text('${_months[_month.month - 1]} ${_month.year}',
+                        style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+                    CupertinoButton(
+                      padding: EdgeInsets.zero,
+                      minimumSize: const Size(36, 36),
+                      onPressed: () => _changeMonth(1),
+                      child: const Icon(CupertinoIcons.chevron_right, size: 20),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Row(
+                  children: _weekdaysShort
+                      .map((d) => Expanded(
+                            child: Center(
+                              child: Text(d,
+                                  style: const TextStyle(
+                                      fontSize: 12, fontWeight: FontWeight.w600,
+                                      color: Color(0xFF8E8E93))),
+                            ),
+                          ))
+                      .toList(),
+                ),
+              ),
+              const SizedBox(height: 4),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: _buildGrid(now),
+              ),
+              const SizedBox(height: 12),
+              Container(height: 1, color: const Color(0xFFE5E5EA), margin: const EdgeInsets.symmetric(horizontal: 20)),
+              const SizedBox(height: 12),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(_labelFor(_selected, now),
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                    Text('$total g · $pct%',
+                        style: const TextStyle(
+                            fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF8E8E93))),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+              if (dayEntries.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Text('No entries for this day',
+                      style: TextStyle(color: Color(0xFF8E8E93), fontWeight: FontWeight.w500)),
+                )
+              else
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Column(
+                    children: [
+                      for (final e in dayEntries)
+                        _EntryTile(entry: e, onDelete: () => _delete(e.id)),
+                    ],
+                  ),
+                ),
+              const SizedBox(height: 24),
+            ],
+          ),
         ),
       ),
     );
