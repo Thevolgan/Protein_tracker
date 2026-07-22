@@ -131,6 +131,24 @@ class _HomePageState extends State<HomePage> {
     _save();
   }
 
+  void _openHistory() {
+    showCupertinoModalPopup(
+      context: context,
+      barrierColor: const Color(0x66000000),
+      builder: (_) => SizedBox(
+        height: MediaQuery.of(context).size.height * 0.85,
+        child: _CalendarModal(
+          entries: entries,
+          goal: goal,
+          onDelete: (id) {
+            setState(() => entries.removeWhere((e) => e.id == id));
+            _save();
+          },
+        ),
+      ),
+    );
+  }
+
   /// Parses whatever is currently in the goal field, saves it if valid,
   /// and returns whether the save succeeded.
   bool _commitGoal() {
@@ -171,18 +189,21 @@ class _HomePageState extends State<HomePage> {
     final dateStr = '${weekdays[now.weekday-1]}, ${months[now.month-1]} ${now.day}';
 
     return CupertinoPageScaffold(
-      child: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 440),
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(20, 24, 20, 40),
-              children: [
-                // Header
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
+      child: Stack(
+        children: [
+          SafeArea(
+            bottom: false,
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 440),
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(20, 24, 20, 110),
                   children: [
-                    Expanded(
+                    // Header
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -364,9 +385,275 @@ class _HomePageState extends State<HomePage> {
                       ],
                     ),
                   ),
-              ],
+                const SizedBox(height: 20),
+                  ],
+                ),
+              ),
             ),
           ),
+          // Fixed "Previous days" button, always pinned to the bottom of
+          // the screen regardless of how far the list above is scrolled.
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 20 + MediaQuery.of(context).padding.bottom,
+            child: Center(
+              child: GestureDetector(
+                onTap: _openHistory,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1C1C1E),
+                    borderRadius: BorderRadius.circular(100),
+                    boxShadow: const [
+                      BoxShadow(color: Color(0x33000000), blurRadius: 16, offset: Offset(0, 6)),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: const [
+                      Icon(CupertinoIcons.calendar, size: 18, color: CupertinoColors.white),
+                      SizedBox(width: 8),
+                      Text('Previous days',
+                          style: TextStyle(
+                              fontSize: 15, fontWeight: FontWeight.w600,
+                              color: CupertinoColors.white)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CalendarModal extends StatefulWidget {
+  final List<Entry> entries;
+  final int goal;
+  final void Function(String id) onDelete;
+  const _CalendarModal({
+    required this.entries,
+    required this.goal,
+    required this.onDelete,
+  });
+
+  @override
+  State<_CalendarModal> createState() => _CalendarModalState();
+}
+
+class _CalendarModalState extends State<_CalendarModal> {
+  late List<Entry> _entries;
+  late DateTime _month; // first day of the displayed month
+  late DateTime _selected;
+
+  static const _weekdaysShort = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+  static const _weekdays = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+  static const _months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+  @override
+  void initState() {
+    super.initState();
+    _entries = List.of(widget.entries);
+    final now = DateTime.now();
+    _month = DateTime(now.year, now.month, 1);
+    _selected = DateTime(now.year, now.month, now.day);
+  }
+
+  bool _sameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
+  List<Entry> _entriesFor(DateTime day) =>
+      _entries.where((e) => _sameDay(e.at, day)).toList()
+        ..sort((a, b) => b.at.compareTo(a.at));
+
+  Set<String> get _daysWithEntries =>
+      _entries.map((e) => '${e.at.year}-${e.at.month}-${e.at.day}').toSet();
+
+  void _delete(String id) {
+    setState(() => _entries.removeWhere((e) => e.id == id));
+    widget.onDelete(id);
+  }
+
+  void _changeMonth(int delta) {
+    setState(() => _month = DateTime(_month.year, _month.month + delta, 1));
+  }
+
+  String _labelFor(DateTime d, DateTime now) {
+    if (_sameDay(d, now)) return 'Today';
+    final yesterday = now.subtract(const Duration(days: 1));
+    if (_sameDay(d, yesterday)) return 'Yesterday';
+    return '${_weekdays[d.weekday - 1]}, ${_months[d.month - 1]} ${d.day}';
+  }
+
+  Widget _buildGrid(DateTime now) {
+    final daysInMonth = DateTime(_month.year, _month.month + 1, 0).day;
+    final firstWeekdayOffset = _month.weekday % 7; // Sunday = 0
+    final totalCells = firstWeekdayOffset + daysInMonth;
+    final rows = (totalCells / 7).ceil();
+    final daysWithEntries = _daysWithEntries;
+
+    int dayCounter = 1;
+    final rowWidgets = <Widget>[];
+    for (int r = 0; r < rows; r++) {
+      final cells = <Widget>[];
+      for (int c = 0; c < 7; c++) {
+        final cellIndex = r * 7 + c;
+        if (cellIndex < firstWeekdayOffset || dayCounter > daysInMonth) {
+          cells.add(const Expanded(child: SizedBox(height: 44)));
+        } else {
+          final date = DateTime(_month.year, _month.month, dayCounter);
+          final isToday = _sameDay(date, now);
+          final isSelected = _sameDay(date, _selected);
+          final hasEntries = daysWithEntries.contains('${date.year}-${date.month}-${date.day}');
+          cells.add(Expanded(
+            child: GestureDetector(
+              onTap: () => setState(() => _selected = date),
+              child: Container(
+                height: 44,
+                margin: const EdgeInsets.all(2),
+                decoration: BoxDecoration(
+                  color: isSelected ? const Color(0xFF1C1C1E) : const Color(0x00000000),
+                  shape: BoxShape.circle,
+                  border: (isToday && !isSelected)
+                      ? Border.all(color: const Color(0xFF0A84FF), width: 1.5)
+                      : null,
+                ),
+                alignment: Alignment.center,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text('$dayCounter',
+                        style: TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w600,
+                            color: isSelected ? CupertinoColors.white : const Color(0xFF1C1C1E))),
+                    if (hasEntries)
+                      Container(
+                        width: 4, height: 4,
+                        margin: const EdgeInsets.only(top: 2),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: isSelected ? CupertinoColors.white : const Color(0xFF0A84FF),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ));
+          dayCounter++;
+        }
+      }
+      rowWidgets.add(Row(children: cells));
+    }
+    return Column(children: rowWidgets);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final dayEntries = _entriesFor(_selected);
+    final total = dayEntries.fold<int>(0, (s, e) => s + e.grams);
+    final pct = widget.goal > 0 ? ((total / widget.goal) * 100).clamp(0, 999).round() : 0;
+
+    return Container(
+      decoration: const BoxDecoration(
+        color: Color(0xFFF2F2F7),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 10),
+            Container(
+              width: 36, height: 5,
+              decoration: BoxDecoration(
+                  color: const Color(0xFFD1D1D6), borderRadius: BorderRadius.circular(3)),
+            ),
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  CupertinoButton(
+                    padding: EdgeInsets.zero,
+                    minimumSize: const Size(36, 36),
+                    onPressed: () => _changeMonth(-1),
+                    child: const Icon(CupertinoIcons.chevron_left, size: 20),
+                  ),
+                  Text('${_months[_month.month - 1]} ${_month.year}',
+                      style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+                  CupertinoButton(
+                    padding: EdgeInsets.zero,
+                    minimumSize: const Size(36, 36),
+                    onPressed: () => _changeMonth(1),
+                    child: const Icon(CupertinoIcons.chevron_right, size: 20),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Row(
+                children: _weekdaysShort
+                    .map((d) => Expanded(
+                          child: Center(
+                            child: Text(d,
+                                style: const TextStyle(
+                                    fontSize: 12, fontWeight: FontWeight.w600,
+                                    color: Color(0xFF8E8E93))),
+                          ),
+                        ))
+                    .toList(),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: _buildGrid(now),
+            ),
+            const SizedBox(height: 12),
+            Container(height: 1, color: const Color(0xFFE5E5EA), margin: const EdgeInsets.symmetric(horizontal: 20)),
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(_labelFor(_selected, now),
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                  Text('$total g · $pct%',
+                      style: const TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF8E8E93))),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            Flexible(
+              child: dayEntries.isEmpty
+                  ? const Padding(
+                      padding: EdgeInsets.all(24),
+                      child: Text('No entries for this day',
+                          style: TextStyle(color: Color(0xFF8E8E93), fontWeight: FontWeight.w500)),
+                    )
+                  : ListView.builder(
+                      shrinkWrap: true,
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      itemCount: dayEntries.length,
+                      itemBuilder: (context, i) => _EntryTile(
+                        entry: dayEntries[i],
+                        onDelete: () => _delete(dayEntries[i].id),
+                      ),
+                    ),
+            ),
+            const SizedBox(height: 12),
+          ],
         ),
       ),
     );
